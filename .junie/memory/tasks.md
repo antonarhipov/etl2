@@ -138,3 +138,13 @@
     "NEW INSTRUCTION": "WHEN expected files are not explicitly confirmed by listings THEN list the target directory and verify each expected file's presence"
 }
 
+[2026-01-22 01:17] - Updated by Junie - Trajectory analysis
+{
+    "PLAN QUALITY": "suboptimal",
+    "REDUNDANT STEPS": "-",
+    "MISSING STEPS": "update README, submit changes",
+    "BOTTLENECK": "Drafted content but never edited README.md in the repository.",
+    "PROJECT NOTE": "Add the workflow as a new 'Application Workflow' section after Overview in README.md.",
+    "NEW INSTRUCTION": "WHEN task asks to modify README.md THEN apply_patch to README.md and submit"
+}
+

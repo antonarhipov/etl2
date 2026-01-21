@@ -15,6 +15,119 @@ This application reads temperature readings from CSV files in a configurable inp
 - **Summary Reporting**: Logs statistics including records processed, inserted, duplicates, and errors
 - **File Tracking**: Renames processed files to prevent reprocessing
 
+## Application Workflow
+
+The ETL application follows a Spring Batch chunk-oriented processing pattern. Here's how data flows through the system:
+
+### Workflow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           APPLICATION STARTUP                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  1. INITIALIZATION                                                          │
+│     • Spring Boot starts application                                        │
+│     • Flyway runs database migrations (creates temperature_data table)      │
+│     • Spring Batch job (temperatureImportJob) is triggered automatically    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  2. FILE DISCOVERY                                                          │
+│     • Scan configured input directory (batch.input.directory)               │
+│     • Find all *.csv files                                                  │
+│     • Queue files for processing                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  3. CHUNK-BASED PROCESSING (for each file)                                  │
+│     ┌─────────────────────────────────────────────────────────────────┐     │
+│     │  READ (FlatFileItemReader)                                      │     │
+│     │  • Parse CSV line by line                                       │     │
+│     │  • Skip header row                                              │     │
+│     │  • Map to TemperatureReading record                             │     │
+│     │  • Collect chunk of 1000 records                                │     │
+│     └─────────────────────────────────────────────────────────────────┘     │
+│                                    │                                        │
+│                                    ▼                                        │
+│     ┌─────────────────────────────────────────────────────────────────┐     │
+│     │  PROCESS (ItemProcessor)                                        │     │
+│     │  • Validate datetime format (ISO-8601)                          │     │
+│     │  • Validate temperature value                                   │     │
+│     │  • Skip malformed records → log error details                   │     │
+│     └─────────────────────────────────────────────────────────────────┘     │
+│                                    │                                        │
+│                                    ▼                                        │
+│     ┌─────────────────────────────────────────────────────────────────┐     │
+│     │  WRITE (JdbcBatchItemWriter)                                    │     │
+│     │  • INSERT IGNORE into temperature_data table                    │     │
+│     │  • Duplicates (name+datetime) silently ignored                  │     │
+│     │  • Duplicate details → logs/duplicates-{timestamp}.log          │     │
+│     │  • Commit transaction                                           │     │
+│     └─────────────────────────────────────────────────────────────────┘     │
+│                                    │                                        │
+│                          (repeat until EOF)                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  4. POST-PROCESSING                                                         │
+│     • Rename processed file: data.csv → data.csv.processed                  │
+│     • Move to next file (if any)                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  5. JOB COMPLETION                                                          │
+│     • JobExecutionListener generates summary report                         │
+│     • Log statistics to console:                                            │
+│       - Total records processed                                             │
+│       - Successful inserts                                                  │
+│       - Duplicates ignored                                                  │
+│       - Errors (skipped rows)                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Processing Details
+
+#### Read Phase
+- Uses `FlatFileItemReader` with `MultiResourceItemReader` for multiple files
+- Parses CSV with comma delimiter and UTF-8 encoding
+- Maps columns: `name`, `datetime`, `temp` to `TemperatureReading` record
+
+#### Process Phase
+- Validates `datetime` field against ISO-8601 format (`yyyy-MM-dd'T'HH:mm:ss`)
+- Validates `temp` field is a valid decimal number
+- Invalid records are skipped and logged with line number and error details
+
+#### Write Phase
+- Uses `JdbcBatchItemWriter` with MySQL `INSERT IGNORE` statement
+- Database unique constraint `(name, datetime)` handles duplicates
+- Transactions commit every 1000 records (configurable via `batch.chunk-size`)
+
+### Error Handling
+
+| Error Type | Behavior |
+|------------|----------|
+| Malformed CSV row | Skip row, log error, continue processing |
+| Invalid datetime format | Skip row, log error, continue processing |
+| Invalid temperature value | Skip row, log error, continue processing |
+| Duplicate record | Silently ignore (INSERT IGNORE), log to duplicate file |
+| Database connection error | Job fails, can be restarted |
+
+### File Lifecycle
+
+```
+input/
+├── data.csv              → Being processed
+├── data.csv.processed    → Already processed (renamed)
+└── new_data.csv          → Waiting to be processed
+```
+
 ## Requirements
 
 - Java 21

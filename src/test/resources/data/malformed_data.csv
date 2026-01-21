@@ -1,0 +1,7 @@
+name,datetime,temp
+Sensor1,invalid-date,23.5
+,2024-01-15T10:30:00,23.5
+Sensor3,2024-01-15T12:00:00,not-a-number
+Sensor4,2024-01-15T13:00:00,25.0
+Sensor5,,22.5
+Sensor6,2024-01-15T14:00:00,

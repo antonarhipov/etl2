@@ -1,0 +1,249 @@
+plan:
+  name: "Temperature Data Import Batch Job"
+  phases:
+    - id: phase-1
+      name: "Project Foundation & Infrastructure"
+      description: "Set up project structure, database schema, and configuration properties"
+      tasks:
+        - id: task-1.1
+          name: "Create Package Structure"
+          description: "Create the required package hierarchy under org.example.etl2: batch, batch.listener, batch.processor, batch.reader, batch.writer, model, config"
+          artifact: "src/main/java/org/example/etl2/{batch,batch/listener,batch/processor,batch/reader,batch/writer,model,config} directories"
+          depends_on: []
+          validation: "All package directories exist with package-info.java or placeholder classes"
+
+        - id: task-1.2
+          name: "Create Flyway Migration"
+          description: "Create V1__create_temperature_data_table.sql with temperature_data table schema including id, name, datetime, temp columns and unique constraint on (name, datetime)"
+          artifact: "src/main/resources/db/migration/V1__create_temperature_data_table.sql"
+          depends_on: []
+          validation: "SQL file exists with correct CREATE TABLE statement and UNIQUE KEY constraint"
+
+        - id: task-1.3
+          name: "Configure Application Properties"
+          description: "Add batch configuration properties: batch.input.directory, batch.chunk-size (default 1000), and MySQL/Flyway configuration"
+          artifact: "src/main/resources/application.properties"
+          depends_on: []
+          validation: "Properties file contains all required configuration keys with sensible defaults"
+
+        - id: task-1.4
+          name: "Create Test Resources Directory"
+          description: "Create src/test/resources/data/ directory and application-test.properties for test-specific configuration"
+          artifact: "src/test/resources/data/, src/test/resources/application-test.properties"
+          depends_on: []
+          validation: "Test resources directory exists, application-test.properties configured for Testcontainers"
+
+      checkpoint:
+        description: "Verify project foundation is properly configured"
+        criteria:
+          - "Package structure matches constraints.md Section 1.1"
+          - "Flyway migration file is syntactically correct SQL"
+          - "Application starts without errors (excluding missing batch components)"
+          - "Test configuration is ready for Testcontainers"
+
+    - id: phase-2
+      name: "Core Domain Model & Data Access"
+      description: "Implement the data model (Java record) and database writer component"
+      tasks:
+        - id: task-2.1
+          name: "Create TemperatureReading Record"
+          description: "Create Java record with fields: String name, LocalDateTime datetime, BigDecimal temp as per constraints.md Section 2.1"
+          artifact: "src/main/java/org/example/etl2/model/TemperatureReading.java"
+          depends_on: ["task-1.1"]
+          validation: "Record compiles, uses correct types (LocalDateTime, BigDecimal), is immutable"
+
+        - id: task-2.2
+          name: "Create Custom FieldSetMapper"
+          description: "Implement FieldSetMapper<TemperatureReading> to map CSV fields to the record, parsing datetime with ISO-8601 format and temp as BigDecimal"
+          artifact: "src/main/java/org/example/etl2/batch/reader/TemperatureReadingFieldSetMapper.java"
+          depends_on: ["task-2.1"]
+          validation: "Mapper correctly converts FieldSet to TemperatureReading record"
+
+        - id: task-2.3
+          name: "Create JdbcBatchItemWriter Configuration"
+          description: "Implement JdbcBatchItemWriter<TemperatureReading> using INSERT IGNORE for duplicate handling as per constraints.md Section 3.1"
+          artifact: "src/main/java/org/example/etl2/batch/writer/TemperatureItemWriter.java"
+          depends_on: ["task-2.1"]
+          validation: "Writer uses INSERT IGNORE SQL, parameterized queries, and correct column mapping"
+
+        - id: task-2.4
+          name: "Create ItemProcessor for Validation"
+          description: "Implement ItemProcessor<TemperatureReading, TemperatureReading> for data validation (non-null fields, valid values)"
+          artifact: "src/main/java/org/example/etl2/batch/processor/TemperatureItemProcessor.java"
+          depends_on: ["task-2.1"]
+          validation: "Processor validates required fields and returns null for invalid records"
+
+      checkpoint:
+        description: "Verify core domain model and data access components"
+        criteria:
+          - "TemperatureReading record uses Java 21 record syntax"
+          - "No JPA/Hibernate annotations present"
+          - "FieldSetMapper handles ISO-8601 datetime parsing"
+          - "Writer uses INSERT IGNORE for duplicate handling"
+          - "Processor validates all required fields"
+
+    - id: phase-3
+      name: "Batch Job Configuration"
+      description: "Configure Spring Batch job with reader, processor, writer, and step/job definitions"
+      tasks:
+        - id: task-3.1
+          name: "Create FlatFileItemReader Configuration"
+          description: "Configure FlatFileItemReader with DelimitedLineTokenizer (comma), header skip, UTF-8 encoding, and the custom FieldSetMapper"
+          artifact: "src/main/java/org/example/etl2/batch/reader/TemperatureItemReaderConfig.java"
+          depends_on: ["task-2.2"]
+          validation: "Reader configured to skip header, use comma delimiter, UTF-8 encoding"
+
+        - id: task-3.2
+          name: "Create MultiResourceItemReader Configuration"
+          description: "Configure MultiResourceItemReader to process all CSV files in the configured input directory"
+          artifact: "src/main/java/org/example/etl2/batch/reader/MultiFileReaderConfig.java"
+          depends_on: ["task-3.1"]
+          validation: "Reader discovers and processes all .csv files in batch.input.directory"
+
+        - id: task-3.3
+          name: "Create Batch Job Configuration Class"
+          description: "Create main batch configuration class with @Configuration, @EnableBatchProcessing, defining temperatureImportJob and importStep with chunk size 1000"
+          artifact: "src/main/java/org/example/etl2/batch/TemperatureImportJobConfig.java"
+          depends_on: ["task-3.2", "task-2.3", "task-2.4"]
+          validation: "Job named 'temperatureImportJob', step named 'importStep', chunk size 1000"
+
+        - id: task-3.4
+          name: "Configure Skip Policy"
+          description: "Add fault tolerance configuration to skip malformed records (FlatFileParseException, validation exceptions) with logging"
+          artifact: "Updated src/main/java/org/example/etl2/batch/TemperatureImportJobConfig.java"
+          depends_on: ["task-3.3"]
+          validation: "Skip policy configured for parse and validation exceptions, unlimited skip limit"
+
+        - id: task-3.5
+          name: "Configure Job Auto-Start"
+          description: "Configure job to run automatically on application startup as per requirements.md Section 6.7"
+          artifact: "Updated application.properties or JobLauncher configuration"
+          depends_on: ["task-3.3"]
+          validation: "Job executes automatically when application starts"
+
+      checkpoint:
+        description: "Verify batch job configuration is complete and functional"
+        criteria:
+          - "Job and step names match specification"
+          - "Chunk size is 1000"
+          - "CSV files are discovered and processed"
+          - "Skip policy handles malformed records"
+          - "Job runs on startup"
+
+    - id: phase-4
+      name: "Listeners, Logging & Error Handling"
+      description: "Implement job listeners for summary reporting, skip tracking, and duplicate logging"
+      tasks:
+        - id: task-4.1
+          name: "Create JobCompletionListener"
+          description: "Implement JobExecutionListener with @AfterJob to log summary: total processed, successful inserts, duplicates, errors"
+          artifact: "src/main/java/org/example/etl2/batch/listener/JobCompletionListener.java"
+          depends_on: ["task-3.3"]
+          validation: "Summary logged with all four metrics on job completion"
+
+        - id: task-4.2
+          name: "Create SkipItemListener"
+          description: "Implement SkipListener to track and log skipped records with line number, raw content, and error reason"
+          artifact: "src/main/java/org/example/etl2/batch/listener/SkipItemListener.java"
+          depends_on: ["task-3.4"]
+          validation: "Skipped records logged with full context (line number, content, reason)"
+
+        - id: task-4.3
+          name: "Create DuplicateLogWriter"
+          description: "Implement component to write duplicate records to separate log file in logs/duplicates-{timestamp}.log format"
+          artifact: "src/main/java/org/example/etl2/batch/listener/DuplicateLogWriter.java"
+          depends_on: ["task-4.1"]
+          validation: "Duplicate log file created with correct naming pattern and line format"
+
+        - id: task-4.4
+          name: "Create Custom Exceptions"
+          description: "Create domain-specific exceptions: InvalidTemperatureException, InvalidDateTimeException for validation errors"
+          artifact: "src/main/java/org/example/etl2/batch/processor/InvalidTemperatureException.java, InvalidDateTimeException.java"
+          depends_on: ["task-2.4"]
+          validation: "Custom exceptions created with meaningful error messages"
+
+        - id: task-4.5
+          name: "Create File Renaming Component"
+          description: "Implement component to rename processed files with .processed suffix after successful job completion"
+          artifact: "src/main/java/org/example/etl2/batch/listener/ProcessedFileRenamer.java"
+          depends_on: ["task-4.1"]
+          validation: "Processed CSV files renamed with .processed suffix"
+
+        - id: task-4.6
+          name: "Register Listeners with Job"
+          description: "Register JobCompletionListener, SkipItemListener, and ProcessedFileRenamer with the batch job configuration"
+          artifact: "Updated src/main/java/org/example/etl2/batch/TemperatureImportJobConfig.java"
+          depends_on: ["task-4.1", "task-4.2", "task-4.3", "task-4.5"]
+          validation: "All listeners properly registered and invoked during job execution"
+
+      checkpoint:
+        description: "Verify all logging and error handling components"
+        criteria:
+          - "Job summary contains all required metrics"
+          - "Skipped records include line number, content, and reason"
+          - "Duplicate log file follows specified format"
+          - "Processed files renamed correctly"
+          - "Custom exceptions used for domain errors"
+
+    - id: phase-5
+      name: "Integration Testing"
+      description: "Create comprehensive integration tests using Testcontainers with MySQL"
+      tasks:
+        - id: task-5.1
+          name: "Create Test CSV Files"
+          description: "Create test data files: valid_data.csv, empty_file.csv, with_duplicates.csv, malformed_data.csv, mixed_data.csv"
+          artifact: "src/test/resources/data/{valid_data.csv, empty_file.csv, with_duplicates.csv, malformed_data.csv, mixed_data.csv}"
+          depends_on: ["task-1.4"]
+          validation: "All test CSV files created with appropriate test scenarios"
+
+        - id: task-5.2
+          name: "Configure Testcontainers Base Test"
+          description: "Create base test configuration class with MySQL Testcontainer setup and @SpringBatchTest annotation"
+          artifact: "src/test/java/org/example/etl2/batch/BaseIntegrationTest.java"
+          depends_on: ["task-5.1"]
+          validation: "Base test class starts MySQL container and configures Spring context"
+
+        - id: task-5.3
+          name: "Test Happy Path"
+          description: "Create test for valid CSV data import: verify job completes, correct record count in database, summary accuracy"
+          artifact: "src/test/java/org/example/etl2/batch/TemperatureImportJobTest.java"
+          depends_on: ["task-5.2", "task-4.6"]
+          validation: "Test passes with correct insert count and job status COMPLETED"
+
+        - id: task-5.4
+          name: "Test Duplicate Handling"
+          description: "Create tests for duplicate detection: within-file duplicates, database duplicates, re-processing same file"
+          artifact: "Updated src/test/java/org/example/etl2/batch/TemperatureImportJobTest.java"
+          depends_on: ["task-5.3"]
+          validation: "Tests verify duplicates are skipped and counted correctly"
+
+        - id: task-5.5
+          name: "Test Error Handling"
+          description: "Create tests for malformed data: invalid datetime, missing fields, invalid temperature values"
+          artifact: "Updated src/test/java/org/example/etl2/batch/TemperatureImportJobTest.java"
+          depends_on: ["task-5.3"]
+          validation: "Tests verify malformed rows are skipped, valid rows processed, job completes"
+
+        - id: task-5.6
+          name: "Test Edge Cases"
+          description: "Create tests for edge cases: empty file, mixed valid/invalid/duplicate data, summary formula validation"
+          artifact: "Updated src/test/java/org/example/etl2/batch/TemperatureImportJobTest.java"
+          depends_on: ["task-5.3"]
+          validation: "Tests verify correct behavior for all edge cases"
+
+        - id: task-5.7
+          name: "Verify All Tests Pass"
+          description: "Run complete test suite and ensure all tests pass with correct assertions"
+          artifact: "Test execution report"
+          depends_on: ["task-5.3", "task-5.4", "task-5.5", "task-5.6"]
+          validation: "All tests pass, no failures or errors"
+
+      checkpoint:
+        description: "Final integration verification"
+        criteria:
+          - "All test scenarios from acceptance_criteria.md covered"
+          - "Testcontainers with MySQL used (no H2)"
+          - "All tests pass"
+          - "Summary formula validated: processed = inserts + duplicates + errors"
+          - "Job completes successfully for all test scenarios"
+          - "Implementation matches all constraints from constraints.md"
